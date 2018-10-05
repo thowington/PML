@@ -1,0 +1,201 @@
+---
+title: " Predicting Physical Activities from Wearable Device Data"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The data set consists of measurements taken from wearable devices while subjects perform exercises while sitting, sitting down, standing, standing up, and walking.  This data set comes from the Human Activity Recognition project (http://groupware.les.inf.puc-rio.br/har).  The goal of this project is to use machine learning techniques to predict from the device measurements how each exercise is being performed.
+
+The initial steps of analysis involve importing necessary packages and reading in the raw data.
+
+```{r, message = FALSE }
+library(caret)
+library(dplyr)
+library(rpart)
+
+setwd("H:/practical_machine_learning/")
+inData = read.csv("pml-training.csv")
+
+# summary(inData)
+```
+
+## Prepping the data
+
+The raw data includes many columns that appear to add little or no value to the analysis.  These are the "statistical summary" columns that begin with "max_", "min_", stddev_", etc.  Where these fields contain data, they are necessarily derivative of the raw measurements.  The following code identifies these columns, and excludes them from the data set.
+
+```{r, Data Prep}
+MaxCols <- colnames(inData)[(grep("max_", colnames(inData)))]
+KurCols <- colnames(inData)[(grep("kurtosis_", colnames(inData)))]
+MinCols <- colnames(inData)[(grep("min_", colnames(inData)))]
+SkeCols <- colnames(inData)[(grep("skewness_", colnames(inData)))]
+AmpCols <- colnames(inData)[(grep("amplitude_", colnames(inData)))]
+VarCols <- colnames(inData)[(grep("var_", colnames(inData)))]
+StdCols <- colnames(inData)[(grep("stddev_", colnames(inData)))]
+AveCols <- colnames(inData)[(grep("avg_", colnames(inData)))]
+
+ExcludeCols = c(MaxCols, KurCols, MinCols, SkeCols, AmpCols, VarCols, StdCols, AveCols)
+IncludeCols = colnames(inData)[which(!(colnames(inData) %in% ExcludeCols))]
+inData <- inData[,IncludeCols]
+```
+
+A seed is set to ensure that results are repeatable, and the data set is divided into training and validation sets.  After that, initial columns relating to the subject and time are removed from both data sets.  The result is two 53 column data sets - one for training, and one for validation.
+
+``` {r, Set-up Code}
+set.seed(555)
+
+inTrain = createDataPartition(inData$classe, p = 3/4)[[1]]
+intrain = na_if(inTrain, "#DIV/0!")
+training = inData[inTrain,]
+validation = inData[-inTrain,]
+
+training = training[,8:60]
+validation = validation[,8:60]
+
+```
+
+## Prediction tools
+
+The goal of this project is to predict from the data what type of exercise is being performed.  The nature of the prediction informs the choice of tools to use.  In particular, because the prediction is a *category*  of physical activity, and therefore has no native numerical ordering, regression does not appear to be a productive avenue of inquiry.  However, several other tools might yield good results.  Here, I train and predict with 
+
+* a classification tree,
+* the four most important principal components,
+* the eight most important principal components,
+* the twelve  most important principal components,
+* a random forest, and
+* gradient boosting.
+
+## Classification and regression tree
+
+The first tool used is the classification tree from the rpart package. 
+
+``` {R, Classification Tree}
+start_time <- proc.time()
+rpart_Fit <- rpart(classe ~., method = "class", data = training, na.action = na.pass)
+rpart_Predict <- predict(rpart_Fit, validation[,-53], type="class")
+rpart_confusion <- confusionMatrix(rpart_Predict, reference = validation$classe)
+finish_time <- proc.time()
+elapsed_time = finish_time - start_time
+rpart_confusion
+```
+
+The confusion matrix shows that this method has accuracy of only 72.8 percent.  The confusion matrix shows that each type of activity is misclassified dozens of times.  However, this method is fast. The time (in seconds) required to make this prediction is given by elasped_time:
+
+```{R} 
+elapsed_time
+```
+
+## Principal component analysis
+
+Predictions are also made using principal components.  The first test, using only the four most important principal components, results in 75% prediction accuracy, a slight improvement over the classification tree method.
+
+```{r, 4 Principal Components}
+start_time <- proc.time()
+preProc <- preProcess(training[,-53], method="pca", pcaComp=4)
+trainPC <- predict(preProc, training[,-53])
+trainPC <- data.frame(trainPC, training$classe)
+modelFit <- train(training.classe ~., data=trainPC)
+testPC <- predict(preProc, validation[,-53])
+pca_conf_4 <- confusionMatrix(validation$classe, predict(modelFit, testPC))
+finish_time <- proc.time()
+elapsed_time = finish_time - start_time
+pca_conf_4$overall
+```
+
+The elapsed time (in seconds) using four principal components is: 
+
+```{R} 
+elapsed_time
+```
+
+The second principal components prediction, using eight principal components, shows marked improvement, reaching 94% prediction accuracy on the validation set.
+
+```{r, 8 Principal Components}
+start_time <- proc.time()
+preProc <- preProcess(training[,-53], method="pca", pcaComp=8)
+trainPC <- predict(preProc, training[,-53])
+trainPC <- data.frame(trainPC, training$classe)
+modelFit <- train(training.classe ~., data=trainPC)
+testPC <- predict(preProc, validation[,-53])
+pca_conf_8 <- confusionMatrix(validation$classe, predict(modelFit, testPC))
+finish_time <- proc.time()
+elapsed_time = finish_time - start_time
+pca_conf_8$overall
+```
+
+The elapsed time using eight principal components is:
+
+```{R} 
+elapsed_time
+```
+
+The third principal components test uses the 12 most important principal components.  The result is better, as expected, but the incremental improvement in accuracy over the previous test is rather small - 96% accuracy versus 94%.
+
+```{r, 12 Principal Components}
+start_time <- proc.time()
+preProc <- preProcess(training[,-53], method="pca", pcaComp=12)
+trainPC <- predict(preProc, training[,-53])
+trainPC <- data.frame(trainPC, training$classe)
+modelFit <- train(training.classe ~., data=trainPC)
+testPC <- predict(preProc, validation[,-53])
+pca_conf_12 <- confusionMatrix(validation$classe, predict(modelFit, testPC))
+finish_time <- proc.time()
+elapsed_time = finish_time - start_time
+pca_conf_12$overall
+```
+
+In addition, the time to perform perdition with 12 principal components is greater than when using 8:
+
+```{R} 
+elapsed_time
+```
+
+## Gradient boosting
+
+Next, a prediction is performed using gradient boosting.  While gradient boosting achieves approximately the same level of accuracy as using 12 principal components, it is noticeably slower, requiring almost 50% more time to complete.
+
+``` {r, Gradient Boosting}
+start_time <- proc.time()
+gbmFit <- train(classe ~ ., data=training, method = "gbm", verbose = FALSE)
+gbmPredict <- predict(gbmFit, validation[, -53])
+gbm_conf <-confusionMatrix(gbmPredict, reference = validation$classe)
+finish_time <- proc.time()
+elapsed_time = finish_time - start_time
+gbm_conf$overall
+```
+
+The time required to generate a prediction with gradient boosting is:
+
+```{R} 
+elapsed_time
+```
+## Random forest
+
+The final method attempted here involves using the random forest technique.  This method is by far the most time-intensive.  However, it achieves very high accuracy - more than 99%.
+
+``` {r, Random Forest}
+start_time <- proc.time()
+rfFit <- train(classe ~ ., data = training, method = "rf", prox=TRUE)
+rfPredict <- predict(rfFit, validation[,-53])
+rf_confusion <- confusionMatrix(rfPredict, reference = validation$classe)
+finish_time <- proc.time()
+elapsed_time = finish_time - start_time
+rf_confusion$overall
+```
+As demonstrated below, the elapsed time when using a random forest approach on this data set should be considered in terms of *hours*, rather than seconds or minutes. 
+```{R} 
+elapsed_time
+```
+
+## Summary
+
+Because of it's greater precision, I would choose to use the random forest technique to predict the activity on the 20 test cases.  While this method takes significantly longer to train than other methods, once built, the random forest prediction model can be deployed on the test data very quickly.  I would expect the accuracy on the test data set to mirror the accuracy on the validation data set, over 99% accuracy, or less than 1% error.
+
+#####  Full cite to original Human Activity Recognition work
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6
+
